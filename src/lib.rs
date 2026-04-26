@@ -930,12 +930,79 @@ impl Client {
                 ))
             }
             NodeKind::File => {
-                // Simplified logic for a single file URL
-                // [Similar to the folder logic but using Request::Download]
-                unimplemented!(
-                    "Single file public URL support requires separate Request::Download logic"
-                );
-            }
+                // 1. Use Request::Download with the required fields
+                // 'p' is the public handle, 'n' is the node handle (None for public links),
+                // and 'ssl' is usually 0 or 1 depending on preference.
+                let request = Request::Download {
+                    g: 1,
+                    p: Some(node_id.to_string().into()), // Convert String to SecretBox<str>
+                    n: None, 
+                    ssl: 1,
+                };
+
+                let responses = self
+                    .client
+                    .send_requests(&self.state, &[request], &[])
+                    .await?;
+
+                let file = match responses.as_slice() {
+                    [Response::Download(file)] => file,
+                    [Response::Error(code)] => return Err(Error::from(*code)),
+                    _ => return Err(Error::InvalidResponseType),
+                };
+
+                let mut decrypted_file_key = master_node_key.clone();
+
+                if decrypted_file_key.len() != FILE_KEY_SIZE {
+                    return Err(Error::InvalidPublicUrlFormat);
+                }
+
+                // EXTRACT AES COMPONENTS
+                utils::unmerge_key_mac(&mut decrypted_file_key);
+                let (aes_key, rest) = decrypted_file_key.split_at(16);
+                let (aes_iv, condensed_mac) = rest.split_at(8);
+
+                let aes_key_array: [u8; 16] = aes_key.try_into().unwrap();
+                let aes_iv_array: [u8; 8] = aes_iv.try_into().unwrap();
+                let condensed_mac_array: [u8; 8] = condensed_mac.try_into().unwrap();
+
+                // DECRYPT ATTRIBUTES
+                let mut buffer = BASE64_URL_SAFE_NO_PAD.decode(&file.attr)?;
+                let attrs = NodeAttributes::decrypt_and_unpack(
+                    &aes_key_array,
+                    buffer.as_mut_slice(),
+                )?;
+
+                let fingerprint = attrs.extract_fingerprint();
+                let node = Node {
+                    name: attrs.name,
+                    handle: node_id.to_string(),
+                    owner: String::new(), // DownloadResponse doesn't provide owner; use empty
+                    size: file.size,      // Field name is 'size', not 'sz'
+                    kind: NodeKind::File,
+                    parent: None,
+                    children: Vec::new(),
+                    aes_key: aes_key_array,
+                    aes_iv: Some(aes_iv_array),
+                    condensed_mac: Some(condensed_mac_array),
+                    sparse_checksum: fingerprint.as_ref().map(|f| f.checksum),
+                    // DownloadResponse doesn't provide a timestamp ('ts'); 
+                    // we default to current time or None if the struct allows.
+                    created_at: Some(Utc::now()), 
+                    modified_at: fingerprint
+                        .and_then(|f| Utc.timestamp_opt(f.modified_at, 0).single()),
+                    download_id: Some(node_id.to_string()),
+                    thumbnail_handle: None,
+                    preview_image_handle: None,
+                };
+
+                nodes.insert(node.handle.clone(), node);
+
+                Ok(Nodes::new(
+                    nodes,
+                    String::new(),
+                    Some(node_id.to_string()),
+                ))            }            
             // Exhaustive match for node_kind (from URL)
             _ => Err(Error::InvalidPublicUrlFormat),
         }
