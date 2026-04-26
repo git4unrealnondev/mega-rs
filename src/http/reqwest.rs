@@ -4,8 +4,8 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::io::AsyncRead;
 use futures::TryStreamExt;
+use futures::io::AsyncRead;
 use json::Value;
 use reqwest::Body;
 use reqwest_middleware::ClientWithMiddleware;

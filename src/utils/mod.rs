@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
+use aes::Aes128;
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
-use aes::Aes128;
 use aes_gcm::{AeadInPlace, Aes128Gcm};
-use base64::prelude::{Engine, BASE64_URL_SAFE_NO_PAD};
+use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
 use cipher::BlockDecrypt;
 use hkdf::Hkdf;
 use pbkdf2::pbkdf2_hmac_array;
@@ -14,9 +14,9 @@ use sha2::{Sha256, Sha512};
 
 pub mod rsa;
 
+use crate::Result;
 use crate::http::UserSession;
 use crate::protocol::commands::UserAttributesResponse;
-use crate::Result;
 
 /// Represents storage quotas from MEGA.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

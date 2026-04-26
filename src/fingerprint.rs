@@ -1,7 +1,7 @@
 use std::pin::pin;
 
 use aes::Aes128;
-use base64::prelude::{Engine, BASE64_URL_SAFE_NO_PAD};
+use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
 use cipher::{BlockEncryptMut, KeyIvInit};
 use futures::io::{AsyncRead, AsyncReadExt};
 

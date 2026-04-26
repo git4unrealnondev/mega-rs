@@ -6,7 +6,7 @@ use json::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::fingerprint::NodeFingerprint;
-use crate::Result;
+use crate::{Result, error};
 
 /// Represents the node's attributes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,19 +27,46 @@ pub(crate) struct NodeAttributes {
 
 impl NodeAttributes {
     pub(crate) fn decrypt_and_unpack(file_key: &[u8; 16], buffer: &mut [u8]) -> Result<Self> {
-        let mut cbc = cbc::Decryptor::<Aes128>::new(file_key.into(), &<_>::default());
-        for chunk in buffer.chunks_exact_mut(16) {
-            cbc.decrypt_block_mut(chunk.into());
+        use cipher::generic_array::GenericArray;
+        use cipher::{BlockDecryptMut, KeyInit};
+
+        // 1. AES block size is 16. Ensure buffer is valid.
+        if buffer.len() % 16 != 0 {
+            return Err(error::Error::InvalidResponseType);
         }
 
-        assert_eq!(&buffer[..4], b"MEGA");
+        // 2. Initialize the decryptor
+        let mut cbc = cbc::Decryptor::<Aes128>::new(file_key.into(), &<_>::default());
 
-        let len = buffer.iter().take_while(|it| **it != b'\0').count();
+        // 3. Cast the buffer slice to a slice of GenericArrays (Blocks)
+        // This safely reinterprets the &mut [u8] as &mut [GenericArray<u8, U16>]
+        let blocks = unsafe {
+            let (prefix, blocks, suffix) =
+                buffer.align_to_mut::<GenericArray<u8, cipher::consts::U16>>();
+            if !prefix.is_empty() || !suffix.is_empty() {
+                return Err(error::Error::InvalidResponseType);
+            }
+            blocks
+        };
+
+        // 4. Decrypt all blocks in one go to maintain CBC chaining
+        cbc.decrypt_blocks_mut(blocks);
+
+        // 5. Validation and Parsing
+        if &buffer[..4] != b"MEGA" {
+            println!(
+                "DECRYPTION FAILED. First 8 bytes (hex): {:02x?}",
+                &buffer[..8]
+            );
+            println!("Used Key (hex): {:02x?}", file_key);
+            return Err(error::Error::InvalidResponseType);
+        }
+
+        let len = buffer.iter().position(|&b| b == 0).unwrap_or(buffer.len());
         let attrs = json::from_slice(&buffer[4..len])?;
 
         Ok(attrs)
     }
-
     pub(crate) fn pack_and_encrypt(&self, file_key: &[u8; 16]) -> Result<Vec<u8>> {
         let mut buffer = b"MEGA".to_vec();
         json::to_writer(&mut buffer, self)?;
